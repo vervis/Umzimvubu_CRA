@@ -1,0 +1,3 @@
+"layer","source","n","accessed"
+"SWSA_surface_water","https://bgismaps.sanbi.org/server/rest/services/BGIS_Projects/2021SWSAsForSurfaceWater/MapServer/9/query + Sub-national from https://bgismaps.sanbi.org/server/rest/services/BGIS_Projects/2017SWSA/MapServer/0/query",7,"2026-10-20"
+"SWSA_groundwater","https://bgismaps.sanbi.org/server/rest/services/BGIS_Projects/2017SWSA/MapServer/0/query",6,"2026-10-20"

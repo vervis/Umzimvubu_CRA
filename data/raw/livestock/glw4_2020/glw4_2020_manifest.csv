@@ -1,0 +1,4 @@
+"species","code","file","url","bytes","md5","units","mapset","ref_year","accessed"
+"cattle","CTL","GLW4-2020.D-DA.CTL.tif","https://storage.googleapis.com/fao-gismgr-glw4-2020-data/DATA/GLW4-2020/MAPSET/D-DA/GLW4-2020.D-DA.CTL.tif",12667017,"7802a83cc72d764fff3815f9106e13c5","head/km2","D-DA",2020,"2026-10-20"
+"sheep","SHP","GLW4-2020.D-DA.SHP.tif","https://storage.googleapis.com/fao-gismgr-glw4-2020-data/DATA/GLW4-2020/MAPSET/D-DA/GLW4-2020.D-DA.SHP.tif",12175665,"9472a610d5d816df4a76c8efb80ce058","head/km2","D-DA",2020,"2026-10-20"
+"goats","GTS","GLW4-2020.D-DA.GTS.tif","https://storage.googleapis.com/fao-gismgr-glw4-2020-data/DATA/GLW4-2020/MAPSET/D-DA/GLW4-2020.D-DA.GTS.tif",12071177,"7ce8978801b56d40d31397408a2646b6","head/km2","D-DA",2020,"2026-10-20"

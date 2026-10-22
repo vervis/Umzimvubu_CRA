@@ -1,0 +1,11 @@
+model,reason
+CESM2,tasmax and tasmin unavailable
+CESM2-WACCM,tasmax and tasmin unavailable; other required variables have partial SSP coverage
+CMCC-CM2-SR5,tasmax and tasmin source output retracted
+GFDL-CM4-gr1,only some SSPs available
+GFDL-CM4-gr2,only some SSPs available
+HadGEM3-GC31-LL,only some SSPs available
+HadGEM3-GC31-MM,only some SSPs available
+IITM-ESM,tasmax and tasmin unavailable; year 2100 incomplete
+KIOST-ESM,only some SSPs available
+NESM3,only some SSPs available

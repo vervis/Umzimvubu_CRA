@@ -1,0 +1,17 @@
+"value","label","taxon","alien","plantation_taxon"
+0,"Not mapped",,0,0
+1,"Alien_Black Wattle","wattle_black",1,0
+2,"Alien_Gum","gum",1,1
+3,"Alien_Other","other_alien",1,0
+4,"Alien_Pine","pine",1,1
+5,"Alien_Poplar","poplar",1,0
+6,"Alien_Silver Wattle","wattle_silver",1,0
+7,"Bare Ground",,0,0
+8,"Dryland Agriculture",,0,0
+9,"Grassland",,0,0
+10,"Indigenous Bush",,0,0
+11,"Irrigated Agriculture",,0,0
+12,"Maize",,0,0
+13,"Urban",,0,0
+14,"Water",,0,0
+15,"Wetland",,0,0

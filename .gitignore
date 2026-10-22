@@ -1,49 +1,69 @@
-# History files
+# ============================================================================
+# .gitignore for Umzimvubu_CRA
+#
+# Rule of thumb: git tracks CODE and small text metadata. DATA and OUTPUTS
+# live in Dropbox and are rebuilt by the targets pipeline (_targets.R).
+# ============================================================================
+
+# ---- R / RStudio -----------------------------------------------------------
 .Rhistory
 .Rapp.history
-
-# Session Data files
 .RData
 .RDataTmp
-
-# User-specific files
 .Ruserdata
-
-# Example code in package build process
-*-Ex.R
-
-# Output files from R CMD build
-/*.tar.gz
-
-# Output files from R CMD check
-/*.Rcheck/
-
-# RStudio files
 .Rproj.user/
-
-# produced vignettes
-vignettes/*.html
-vignettes/*.pdf
-
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
+.Renviron
 .httr-oauth
+Rplots.pdf
 
-# knitr and R markdown default cache directories
+# knitr / R Markdown / Quarto caches and temp files
 *_cache/
 /cache/
-
-# Temporary files created by R markdown
 *.utf8.md
 *.knit.md
+/.quarto/
 
-# R Environment Variables
-.Renviron
+# ---- Pipeline and package-library state ------------------------------------
+# {targets} data store: large and machine-specific, and rebuilt by tar_make()
+_targets/
+# {renv} package library (renv.lock and renv/activate.R ARE committed)
+renv/library/
+renv/local/
+renv/staging/
+renv/sandbox/
 
-# pkgdown site
-docs/
+# ---- Data: ignore everything under data/ ... -------------------------------
+/data/**
+# ... but let git look inside the folders (a folder on its own is never
+# committed, only the files you re-include below)
+!/data/**/
+# ... and re-include small text files that record data provenance
+!/data/**/manifests/
+!/data/**/manifests/*.csv
+!/data/**/*_manifest.csv
+!/data/**/*_lookup.csv
+!/data/**/*.url
+!/data/README.md
 
-# translation temp files
-po/*~
+# ---- Outputs: rebuilt by the pipeline --------------------------------------
+/outputs/**
+!/outputs/README.md
 
-# RStudio Connect folder
-rsconnect/
+# ---- Safety net: large binary/geodata files anywhere in the repo -----------
+*.tif
+*.tiff
+*.ovr
+*.nc
+*.zip
+*.gpkg
+*.gdb/
+*.shp
+*.shx
+*.dbf
+*.sbn
+*.sbx
+*.dta
+*.rds
+
+# ---- Office lock/temp files ------------------------------------------------
+~$*

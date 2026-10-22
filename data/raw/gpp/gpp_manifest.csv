@@ -1,0 +1,4 @@
+"year","zenodo_record","url","file","bytes","md5","units","licence","accessed"
+2022,23063228,"https://zenodo.org/api/records/23063228/files/gpw_gpp.grassland_lue.model_m_30m_s_20220101_20221231_go03_epsg.4326_v1.2.tif/content","data/raw/gpp/gpw_grassland_gpp_2022_cra.tif",45683364,"981ac7c45ba89e34c7f05392d2a8b777","gC m-2 yr-1","CC BY 4.0","2026-10-20"
+2023,23063230,"https://zenodo.org/api/records/23063230/files/gpw_gpp.grassland_lue.model_m_30m_s_20230101_20231231_go03_epsg.4326_v1.2.tif/content","data/raw/gpp/gpw_grassland_gpp_2023_cra.tif",45750350,"fb0733d86967fb555faf1ea54c5db10e","gC m-2 yr-1","CC BY 4.0","2026-10-20"
+2024,23063232,"https://zenodo.org/api/records/23063232/files/gpw_gpp.grassland_lue.model_m_30m_s_20240101_20241231_go03_epsg.4326_v1.2.tif/content","data/raw/gpp/gpw_grassland_gpp_2024_cra.tif",45991668,"6e454e7841837137fd5a0c740e855bbe","gC m-2 yr-1","CC BY 4.0","2026-10-20"

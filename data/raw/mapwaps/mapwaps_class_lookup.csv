@@ -1,0 +1,20 @@
+"value","label","taxon","alien","plantation_taxon"
+0,"Background",,0,0
+1,"Black/Green Wattle","wattle_black",1,0
+2,"Gum","gum",1,1
+3,"Other Invasive Alien Plants","other_alien",1,0
+4,"Pine","pine",1,1
+5,"Poplar","poplar",1,0
+6,"Silver Wattle","wattle_silver",1,0
+7,"Bare Ground",,0,0
+8,"Dryland Agriculture",,0,0
+9,"Grassland",,0,0
+10,"Indigenous Bush (Other)",,0,0
+11,"Indigenous Bush (Ouhoudt)",,0,0
+12,"Indigenous Bush (Vachellia)",,0,0
+13,"Irrigated Agriculture",,0,0
+14,"Maize",,0,0
+15,"Burnt",,0,0
+16,"Urban",,0,0
+17,"Water",,0,0
+18,"Wetland",,0,0
