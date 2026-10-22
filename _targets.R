@@ -387,5 +387,10 @@ list(
                indicator_files, indicator_register_csv, framework_xlsx,
                catchment_shp, district_shp),
     format = "file"
-  )
+  ),
+
+  # ==========================================================================
+  # 80 Export: map published to docs/ for GitHub Pages
+  # ==========================================================================
+  tar_target(pages_map, export_pages(indicator_map[1]), format = "file")
 )
