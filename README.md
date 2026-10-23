@@ -4,6 +4,8 @@ Climate Risk Assessment (CRA) for the Umzimvubu River Catchment and Alfred Nzo D
 
 **Interactive map:** <https://vervis.github.io/Umzimvubu_CRA/>
 
+**Indicator catalogue:** <https://vervis.github.io/Umzimvubu_CRA/indicators.html> (definitions, data sources, licences, processing and status of every layer; also available as a [CSV table](https://vervis.github.io/Umzimvubu_CRA/indicators.csv))
+
 The tool maps the risk that agricultural livelihoods will be lost to water insecurity as climate change shifts rainfall patterns and increases meteorological drought (sub-risk SR1). It is meant to help decide where nature-based solutions should be implemented, particularly invasive alien plant management. It was developed for the Umzimvubu Hub of the ALBATROSS project.
 
 The tool builds on the climate risk assessment of the GCF-funded project [*Nature-based solutions for transforming smallholder farming systems*](https://www.greenclimate.fund/document/nature-based-solutions-transforming-smallholder-farming-systems-are-vulnerable-impacts), which covered eastern South Africa at coarse resolution. This tool improves on that assessment in two ways:
@@ -19,11 +21,11 @@ The tool follows the IPCC AR6 risk concept: **risk = hazard × vulnerability × 
 
 | Component | Indicators (active) | Main sources |
 |---|---|---|
-| Hazard | Mean annual rainfall; inter-annual rainfall variability; consecutive dry days; aridity index (P/PET, Hargreaves) | NASA NEX-GDDP-CMIP6 v2: ensemble median, 1981–2014 baseline, SSP1-2.6 and SSP2-4.5 for 2021–2040, 2041–2070 and 2071–2100 |
+| Hazard | Mean annual rainfall; inter-annual rainfall variability; consecutive dry days; aridity index (P/PET, Hargreaves) | NASA NEX-GDDP-CMIP6 v2: median of a 25-model ensemble, 1981–2014 baseline, SSP1-2.6 and SSP2-4.5 for 2021–2040, 2041–2070 and 2071–2100 |
 | Vulnerability | Smallholder presence; reliance on agriculture; grazing capacity; reliance on rainfall-dependent water sources; livestock density; old fields; invasive alien trees; lower-income households | SANLC 2022 (DFFE); Census 2011 and 2022 (Stats SA via DataFirst); DAFF 2016 grazing capacity; FAO GLW4; MapWAPS (Stellenbosch University) |
 | Exposure | Rural settlement households; Strategic Water Source Areas | DWS WSKS settlements; SANBI/CSIR SWSA |
 
-The full indicator definitions, sources, licences and citations are in the "About & data sources" section of the interactive map. The processing settings are in `R/30_indicators/indicator_register.csv`.
+The [indicator catalogue](https://vervis.github.io/Umzimvubu_CRA/indicators.html) has one entry per indicator: its definition, risk direction, data source, licence, citation, processing scripts, outputs, coverage and layer statistics, plus a link to the layer on the map. The map's legend links back to the catalogue entry of the layer on screen. The catalogue is generated from `CRA_data_sources_Claude.xlsx` (internal working columns removed), the indicator register and `outputs/tables/indicator_summary.csv` by `export_catalogue()` each time the pipeline runs, so it always matches the published map. The processing settings are in `R/30_indicators/indicator_register.csv`.
 
 ## Repository structure
 
@@ -40,7 +42,8 @@ R/
   70_visualisation/         701: interactive Leaflet map
   80_export/                exports
   functions/                shared functions loaded by tar_source()
-docs/                       published map (GitHub Pages)
+docs/                       GitHub Pages site: map (index.html) and
+                            indicator catalogue (indicators.html, .csv)
 ```
 
 **Pipeline stages:**
@@ -49,6 +52,7 @@ docs/                       published map (GitHub Pages)
 - **20 prepare:** reads, crops, reprojects and derives one physical variable per source, on the source's own grid.
 - **30 indicators:** a generic function resamples every layer to the 1 km template grid (SA Albers Equal Area), masks it to the catchment ∪ Alfred Nzo, and normalises it to 0–1.
 - **70 visualisation:** builds the interactive map.
+- **80 export:** copies the map to `docs/` and builds the indicator catalogue there; commit and push `docs/` to update the website.
 
 ## Reproducing the analysis
 

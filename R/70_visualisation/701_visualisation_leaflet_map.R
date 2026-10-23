@@ -12,12 +12,18 @@
 #   3. Rasters: one hidden group per indicator x {value, score} x period.
 #      Value palettes (viridis) are pooled across periods so change between
 #      periods stays visible; scores use a fixed 0-1 YlOrRd scale.
-#   4. Map: CARTO / Esri basemaps (no Referer needed, unlike the OSM tile
-#      servers, which block file:// pages), catchment, district and
-#      Matatiele boundaries as separate coloured groups, and a custom panel
+#   4. Map: Esri Topographic (default) and Imagery basemaps (no key or
+#      Referer needed), catchment, district and Matatiele boundaries as
+#      separate coloured groups, and a custom panel
 #      (onRender JS): collapsible indicator tree with one active layer,
 #      value/score switch, period selector, opacity slider, boundary and
-#      basemap toggles, and a legend for the active layer.
+#      basemap toggles, and a legend for the active layer with its data
+#      source. An "About & data sources" section lists every source used
+#      (dataset, provider, licence, citation, link from the xlsx), basemap
+#      credits, a disclaimer and the code repository. The legend and About
+#      link to the indicator catalogue (cat_url, built by export_catalogue()
+#      as docs/indicators.html#<id>); the map opens on the layer named in the
+#      URL hash (index.html#<id>), as linked from the catalogue.
 #      Saved to outputs/maps/umzimvubu_cra_indicators_leaflet.html.
 # ============================================================================
 
@@ -35,6 +41,15 @@ fw_xlsx  <- "../CRA_data_sources_Claude.xlsx"
 ind_dir  <- "data/processed/indicators"
 out_html <- "outputs/maps/umzimvubu_cra_indicators_leaflet.html"
 opac     <- 0.8
+repo_url <- "https://github.com/vervis/Umzimvubu_CRA"
+cat_url  <- "https://vervis.github.io/Umzimvubu_CRA/indicators.html"
+about    <- paste(
+  "Indicators for SR1 of the Umzimvubu Climate Risk Assessment (ALBATROSS,",
+  "Umzimvubu Hub), at 1 km resolution. Following the IPCC AR6 risk concept,",
+  "risk combines hazard, vulnerability and exposure; scores are scaled 0-1",
+  "(1 = higher risk) across all periods. Draft research output: indicative",
+  "only, not for site-level decisions."
+)
 dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
 
 rd <- function(f) st_transform(st_zm(st_make_valid(st_read(f, quiet = TRUE))), 4326)
@@ -65,7 +80,10 @@ if (file.exists(fw_xlsx)) {
   x  <- x[!is.na(x[["Register ID"]]), ]
   fw <- data.frame(id = x[["Register ID"]], subrisk = x[["Sub-risk"]],
                    component = x[["Component"]], factor = x[["Factor"]],
-                   q = x[["Question answered"]], role = x[["Role"]])
+                   q = x[["Question answered"]], role = x[["Role"]],
+                   ds = x[["Dataset"]], pv = x[["Provider"]],
+                   yr = x[["Data year / coverage"]], lic = x[["Access / licence"]],
+                   url = x[["Data URL"]], cite = x[["Documentation / citation"]])
   lk  <- as.data.frame(read_excel(fw_xlsx, sheet = "Lookups", col_names = FALSE,
                                   .name_repair = "minimal"))
   lk  <- lk[grepl("^SR\\d", lk[[1]]), ]
@@ -73,7 +91,8 @@ if (file.exists(fw_xlsx)) {
 } else {
   fw <- data.frame(id = reg$id, subrisk = reg$subrisk,
                    component = tools::toTitleCase(reg$component),
-                   factor = reg$label, q = NA, role = NA)
+                   factor = reg$label, q = NA, role = NA, ds = reg$source,
+                   pv = NA, yr = NA, lic = NA, url = NA, cite = NA)
   srl <- character()
 }
 
@@ -100,8 +119,7 @@ plab <- function(p) {
 
 # 3. Rasters + 4. Map ------------------------------------------------------------
 
-bm <- c("Light (CARTO)" = "CartoDB.Positron",
-        "Topographic (Esri)" = "Esri.WorldTopoMap",
+bm <- c("Topographic (Esri)" = "Esri.WorldTopoMap",
         "Satellite (Esri)" = "Esri.WorldImagery")
 
 m <- leaflet(options = leafletOptions(preferCanvas = TRUE))
@@ -144,6 +162,12 @@ pers <- unique(unlist(per))
 pers <- c(setdiff(pers, "baseline"), intersect(pers, "baseline"))
 dflt <- ind[ind$built, ][1, ]
 
+urls <- function(u) {
+  if (is.na(u)) return(character())
+  u <- trimws(unlist(strsplit(u, "[;[:space:]]+")))
+  u[grepl("^https?://", u)]
+}
+
 cmp_ord <- c("Hazard", "Vulnerability", "Exposure")
 tree <- lapply(unique(ind$subrisk), function(s) {
   a  <- ind[ind$subrisk == s, ]
@@ -157,7 +181,9 @@ tree <- lapply(unique(ind$subrisk), function(s) {
            list(name = fc, inds = lapply(seq_len(nrow(d)), function(j) list(
              id = d$id[j], label = d$label[j], q = d$q[j], role = d$role[j],
              units = d$units[j], dir = d$direction[j], built = d$built[j],
-             periods = I(if (d$built[j]) per[[d$id[j]]] else character())
+             periods = I(if (d$built[j]) per[[d$id[j]]] else character()),
+             src = list(ds = d$ds[j], pv = d$pv[j], yr = d$yr[j], lic = d$lic[j],
+                        url = I(urls(d$url[j])), cite = d$cite[j])
            )))
          }))
        }))
@@ -167,7 +193,10 @@ cfg <- list(
   title = "Umzimvubu CRA indicators", tree = tree, layers = I(lyr), legends = leg,
   periods = I(pers), plabs = setNames(lapply(pers, plab), pers),
   bases = I(names(bm)), opacity = opac, def_id = dflt$id,
-  def_period = per[[dflt$id]][1], extent = "CRA extent",
+  def_period = per[[dflt$id]][1], extent = "CRA extent", about = about,
+  repo = repo_url, cat = cat_url,
+  base_credit = paste("Basemaps: Esri World Topographic Map and World Imagery",
+                      "(\u00a9 Esri and its data providers)."),
   bounds = c(list(list(g = "CRA extent", col = "#555555", dash = "4 4", on = FALSE)),
              lapply(bnd, function(b) b[c("g", "col", "dash", "on")]))
 )
@@ -202,6 +231,12 @@ css <- r"---[
 .cra-legend .bar{height:12px;border-radius:2px}
 .cra-legend .ax{display:flex;justify-content:space-between;margin-top:2px}
 .cra-legend .n{color:#777;font-size:11px;margin-top:3px}
+.cra-legend .src{color:#555;font-size:11px;margin-top:5px;border-top:1px solid #eee;padding-top:4px}
+.cra-ab p{margin:3px 0 6px}
+.cra-ab ul{margin:2px 0 6px;padding-left:16px}
+.cra-ab li{margin:0 0 5px}
+.cra-ab .m{color:#666;font-size:11px}
+.cra-panel a,.cra-legend a{color:#1f6fb4}
 ]---"
 
 js <- r"---[
@@ -226,6 +261,10 @@ function(el, x, cfg) {
       String(Number(v.toPrecision(2)));
   };
   var st = {id: cfg.def_id, type: 'value', period: cfg.def_period, op: cfg.opacity, cur: null};
+  var hid = function() { return decodeURIComponent(location.hash.replace(/^#/, '')); };
+  A(cfg.tree).forEach(function(sr) { A(sr.comps).forEach(function(c) { A(c.factors).forEach(function(f) {
+    A(f.inds).forEach(function(i) { if (i.built && i.id === hid()) st.id = i.id; });
+  }); }); });
 
   A(cfg.layers).forEach(function(g) { on(g, false); });
 
@@ -274,7 +313,28 @@ function(el, x, cfg) {
     h += '<label class="cra-ind" style="margin-left:0"><input type="radio" name="cra-bm" value="' + esc(b) + '"' +
       (j === 0 ? ' checked' : '') + '> ' + esc(b) + '</label>';
   });
-  h += '</div></div>';
+  var seen = {}, srcs = [];
+  A(cfg.tree).forEach(function(sr) { A(sr.comps).forEach(function(c) { A(c.factors).forEach(function(f) {
+    A(f.inds).forEach(function(i) {
+      var s = i.src || {}, k = (s.ds || '') + '|' + (s.pv || '');
+      if (!i.built || !s.ds) return;
+      if (!seen[k]) { seen[k] = {s: s, ids: []}; srcs.push(seen[k]); }
+      seen[k].ids.push(i.label);
+    });
+  }); }); });
+  var link = function(u, t) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(t || u) + '</a>'; };
+  h += '</div><details class="cra-sec cra-ab"><summary class="cra-h" style="display:list-item">About &amp; data sources</summary>' +
+    '<p>' + esc(cfg.about) + '</p><p><b>' + link(cfg.cat, 'Indicator catalogue') +
+    '</b>: definitions, data sources, processing and status of every layer.</p><ul>';
+  srcs.forEach(function(x) {
+    var s = x.s, u = A(s.url);
+    h += '<li><b>' + esc(s.pv || '') + '</b>' + (s.pv ? ': ' : '') + esc(s.ds) + (s.yr ? ' (' + esc(s.yr) + ')' : '') +
+      '<div class="m">Used for: ' + esc(x.ids.join('; ')) + '</div>' +
+      (s.lic ? '<div class="m">Access / licence: ' + esc(s.lic) + '</div>' : '') +
+      (s.cite ? '<div class="m">Cite: ' + esc(s.cite) + '</div>' : '') +
+      (u.length ? '<div class="m">' + u.map(function(v) { return link(v, 'Data link'); }).join(' &middot; ') + '</div>' : '') + '</li>';
+  });
+  h += '</ul><p class="m">' + esc(cfg.base_credit) + '</p><p class="m">Code and methods: ' + link(cfg.repo) + '</p></details></div>';
 
   var panel = L.control({position: 'topright'});
   panel.onAdd = function() {
@@ -295,6 +355,19 @@ function(el, x, cfg) {
   var front = function() { if (st.cur) G(st.cur).eachLayer(function(l) { if (l.bringToFront) l.bringToFront(); }); };
   var setOp = function() { if (st.cur) G(st.cur).eachLayer(function(l) { if (l.setOpacity) l.setOpacity(st.op); }); };
 
+  var srcLine = function(i) {
+    var s = i.src || {}, u = A(s.url);
+    if (!s.ds) return '';
+    var t = 'Source: ' + (s.pv ? s.pv + ', ' : '') + s.ds;
+    return '<div class="src">' + (u.length ? link(u[0], t) : esc(t)) + (s.lic ? '<br>' + esc(s.lic) : '') + '</div>';
+  };
+  var catLine = function(i) {
+    return '<div class="src"><a href="' + esc(cfg.cat) + '#' + encodeURIComponent(i.id) +
+      '" target="_blank" rel="noopener">Layer details in the indicator catalogue &rarr;</a></div>';
+  };
+  if (map.attributionControl) map.attributionControl.addAttribution(
+    'CRA layers: ' + link(cfg.repo, 'Umzimvubu CRA') + ' (sources under About)');
+
   function draw() {
     if (st.cur) on(st.cur, false);
     st.cur = null;
@@ -314,7 +387,7 @@ function(el, x, cfg) {
     ld.innerHTML = '<div class="t">' + esc(i.label) + '</div><div class="s">' + esc(sub) + '<br>' +
       esc(cfg.plabs[p] || p) + '</div><div class="bar" style="background:linear-gradient(to right,' +
       A(lg.cols).join(',') + ')"></div><div class="ax"><span>' + fmt(lg.min) + '</span><span>' +
-      fmt(lg.max) + '</span></div>' + (note ? '<div class="n">' + note + '</div>' : '');
+      fmt(lg.max) + '</span></div>' + (note ? '<div class="n">' + note + '</div>' : '') + srcLine(i) + catLine(i);
   }
 
   each('input[name=cra-ind]', function(e) { e.addEventListener('change', function() { st.id = this.value; draw(); }); });
@@ -337,6 +410,17 @@ function(el, x, cfg) {
     bd.style.display = c ? 'none' : '';
     tg.innerHTML = c ? '&#43;' : '&#8722;';
     tg.title = c ? 'Expand' : 'Collapse';
+  });
+
+  window.addEventListener('hashchange', function() {
+    var k = hid();
+    if (!idx[k]) return;
+    st.id = k;
+    each('input[name=cra-ind]', function(e) {
+      e.checked = e.value === k;
+      if (e.checked && e.closest('details.cra-f')) e.closest('details.cra-f').open = true;
+    });
+    draw();
   });
 
   base(A(cfg.bases)[0]);

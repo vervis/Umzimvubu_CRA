@@ -390,7 +390,12 @@ list(
   ),
 
   # ==========================================================================
-  # 80 Export: map published to docs/ for GitHub Pages
+  # 80 Export: map and indicator catalogue published to docs/ for GitHub Pages
   # ==========================================================================
-  tar_target(pages_map, export_pages(indicator_map[1]), format = "file")
+  tar_target(pages_map, export_pages(indicator_map[1]), format = "file"),
+  tar_target(
+    pages_catalogue,
+    export_catalogue(framework_xlsx, indicator_register_csv, indicator_summary),
+    format = "file"
+  )
 )
