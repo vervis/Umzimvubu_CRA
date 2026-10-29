@@ -9,9 +9,14 @@
 #      rectangle)
 #   2. normalise it to 0-1 and set the direction so that 1 = worse
 #
+# NEX-GDDP indicators are also scored per GCM: the normalisation bounds are
+# fitted once to the pooled per-model layers (all GCMs x SSPs x periods) and
+# applied to the ensemble median and to every GCM, so the scores are on one
+# scale and individual models are not clipped by median-based bounds.
+#
 # Everything about an individual indicator (its file, resampling method,
-# direction, bounds) lives in R/30_indicators/indicator_register.csv, not in
-# code. _targets.R runs make_indicator() once per active row.
+# direction, bounds, weight) lives in R/30_indicators/indicator_register.csv,
+# not in code. _targets.R runs make_indicator() once per active row.
 # ============================================================================
 
 
@@ -40,15 +45,20 @@ make_template_grid <- function(catchment_shp, district_shp, out,
 # tail and many zeros (zeros stay 0); "sqrt" is a milder alternative.
 INDICATOR_TRANSFORMS <- c("log1p", "sqrt")
 
+# Per-GCM scores are stored as INT2U = round(score * GCM_SCALE); read them
+# with read_gcm_scores().
+GCM_SCALE <- 10000
+
 
 # ----------------------------------------------------------------------------
 # read_indicator_register(): load and check the register
 # ----------------------------------------------------------------------------
 # Returns only the active rows. `upstream` is converted to symbols so that
 # tarchetypes::tar_map() makes each indicator depend on the stage-20 target
-# that writes its source file.
+# that writes its source file. Optional `weight` (default 1) is the weight
+# of the indicator within its component in stage 40.
 
-read_indicator_register <- function(path) {
+read_indicator_register <- function(path, active_only = TRUE, syms = TRUE) {
   reg <- utils::read.csv(path, stringsAsFactors = FALSE, na.strings = c("", "NA"))
 
   required <- c("id", "active", "component", "subrisk", "src", "temporal",
@@ -58,11 +68,13 @@ read_indicator_register <- function(path) {
   if (length(missing)) stop("Register is missing columns: ",
                             paste(missing, collapse = ", "))
 
-  # Optional column: transform applied before normalising
   if (!"transform" %in% names(reg)) reg$transform <- NA_character_
   reg$transform <- as.character(reg$transform)
+  if (!"weight" %in% names(reg)) reg$weight <- NA_real_
+  reg$weight <- as.numeric(reg$weight)
+  reg$weight[is.na(reg$weight)] <- 1
 
-  reg <- reg[as.logical(reg$active), , drop = FALSE]
+  if (active_only) reg <- reg[as.logical(reg$active), , drop = FALSE]
 
   if (anyDuplicated(reg$id)) stop("Duplicate indicator ids in register.")
   bad <- !is.na(reg$transform) & !reg$transform %in% INDICATOR_TRANSFORMS
@@ -76,11 +88,12 @@ read_indicator_register <- function(path) {
   bad <- !reg$normalise %in% c("minmax", "percentile")
   if (any(bad)) stop("normalise must be minmax or percentile: ",
                      paste(reg$id[bad], collapse = ", "))
+  bad <- reg$weight < 0
+  if (any(bad)) stop("weight must be >= 0: ", paste(reg$id[bad], collapse = ", "))
 
-  # A missing trim/bound/fill arrives as NA; keep it as a numeric NA
   for (col in c("trim", "lower", "upper", "na_fill")) reg[[col]] <- as.numeric(reg[[col]])
 
-  reg$upstream <- rlang::syms(reg$upstream)
+  if (syms) reg$upstream <- rlang::syms(reg$upstream)
   tibble::as_tibble(reg)
 }
 
@@ -111,33 +124,61 @@ indicator_sources <- function(src, temporal, periods) {
 
 
 # ----------------------------------------------------------------------------
+# gcm_sources(): per-model 201 files behind an ensemble-median `src`
+# ----------------------------------------------------------------------------
+# "..._{period}_ensemble_median_umz.tif" -> "..._<period>_<model>_umz.tif".
+# Returns a list (one element per period) of model-named file vectors.
+
+gcm_sources <- function(src, periods, models) {
+  if (!grepl("ensemble_median", src, fixed = TRUE))
+    stop("NEX src must point to an ensemble_median file: ", src)
+  out <- lapply(stats::setNames(periods, periods), function(p) {
+    f <- gsub("{period}", p, sub("ensemble_median", "{model}", src, fixed = TRUE), fixed = TRUE)
+    stats::setNames(vapply(models, function(m) gsub("{model}", m, f, fixed = TRUE), ""), models)
+  })
+  missing <- unlist(out)[!file.exists(unlist(out))]
+  if (length(missing)) stop("Per-model source file(s) not found:\n  ",
+                            paste(utils::head(missing, 20), collapse = "\n  "), call. = FALSE)
+  out
+}
+
+
+read_gcm_scores <- function(f) terra::rast(f) / GCM_SCALE
+
+
+# ----------------------------------------------------------------------------
 # make_indicator(): one register row -> value + score GeoTIFFs
 # ----------------------------------------------------------------------------
-# Writes two multi-layer files (one layer per period; "baseline" for static):
+# Writes (one layer per period; "baseline" for static):
 #   <out_dir>/<component>/<id>_value.tif : on the template grid, real units
 #   <out_dir>/<component>/<id>_score.tif : 0-1, where 1 = worst
+#   <out_dir>/<component>/<id>_bounds.csv: the fitted normalisation (lo, hi
+#                                          on the transformed scale)
+# and for NEX indicators when `models` is given:
+#   <out_dir>/<component>/gcm/<id>_score_<period>.tif : one INT2U layer per
+#                                          GCM, score * GCM_SCALE
 #
-# Normalisation is pooled across all periods of an indicator, so a future
-# layer can score higher than any baseline cell and the change stays visible.
+# Normalisation is pooled across all periods of an indicator (and, for NEX
+# with `models`, across all GCMs), so a future layer can score higher than
+# any baseline cell and the change stays visible.
 #
 #   resample  : terra::project() method. "average" when going from a finer
 #               grid (fractions and 0/1 layers become proportions);
 #               "bilinear" for coarse continuous fields (NEX-GDDP); "near"
 #               or "mode" for classes.
 #   direction : 1 if higher values = worse, -1 if higher values = better
-#   normalise : "minmax" or "percentile" (rank within the CRA extent)
+#   normalise : "minmax" or "percentile" (rank within the pooled values)
 #   trim      : optional, e.g. 0.02 clips values below the 2nd and above the
 #               98th percentile before minmax, so outliers don't squash the
 #               rest. Ignored when lower/upper are given.
 #   lower, upper : optional fixed bounds (e.g. 0 and 1 for shares).
-#               Use these where a meaningful scale exists; the score then does
-#               not change if the extent changes.
 #   na_fill   : optional value for template cells that are NA
 #               after resampling (applied before normalising).
 #   transform : optional, "log1p" or "sqrt" (INDICATOR_TRANSFORMS). Applied
 #               after na_fill and before normalising; trim and lower/upper
 #               then refer to the transformed values. The _value.tif is
 #               written untransformed.
+#   models    : GCM names (201 ensemble); NULL = no per-GCM scoring.
 #   upstream  : the stage-20 target that writes `src`. Not used, only there
 #               so targets builds things in the right order.
 
@@ -145,94 +186,128 @@ make_indicator <- function(id, component, src, temporal, periods,
                            template, resample, direction,
                            normalise = "minmax", trim = NA,
                            lower = NA, upper = NA, na_fill = NA,
-                           transform = NA,
+                           transform = NA, models = NULL,
                            out_dir = "data/processed/indicators",
                            upstream = NULL) {
   force(upstream)
   files <- indicator_sources(src, temporal, periods)
   tmpl  <- terra::rast(template)
+  use_gcm <- temporal == "nex" && length(models) > 0
+  has_tf <- !is.na(transform) && nzchar(transform)
+  if (has_tf && !transform %in% INDICATOR_TRANSFORMS)
+    stop(id, ": unknown transform '", transform, "'.")
 
-  # 1. Resample to template -------------------------------------------------
-  value <- terra::rast(lapply(files, function(f) {
+  prep <- function(f) {
     r <- terra::rast(f)
     if (terra::nlyr(r) > 1) {
       warning(id, ": ", basename(f), " has ", terra::nlyr(r),
               " layers; using the first.", call. = FALSE)
       r <- r[[1]]
     }
-    terra::project(r, tmpl, method = resample)
-  }))
-  names(value) <- names(files)
-
-  if (!is.na(na_fill)) {
-    value <- terra::ifel(is.na(value) & !is.na(tmpl), na_fill, value)
+    r <- terra::project(r, tmpl, method = resample)
+    if (!is.na(na_fill)) r <- terra::ifel(is.na(r) & !is.na(tmpl), na_fill, r)
+    terra::mask(r, tmpl)
   }
-  value <- terra::mask(value, tmpl)
-
-  # 2. Optional transform (for normalising only) ----------------------------
-  x <- value
-  if (!is.na(transform) && nzchar(transform)) {
-    if (!transform %in% INDICATOR_TRANSFORMS) {
-      stop(id, ": unknown transform '", transform, "'.")
-    }
-    lo_v <- terra::global(value, "min", na.rm = TRUE)[[1]]
-    if (any(is.finite(lo_v) & lo_v < 0)) {
+  tf <- function(r) {
+    if (!has_tf) return(r)
+    lo_v <- terra::global(r, "min", na.rm = TRUE)[[1]]
+    if (any(is.finite(lo_v) & lo_v < 0))
       stop(id, ": transform '", transform, "' needs values >= 0 (min ",
            min(lo_v, na.rm = TRUE), ").")
-    }
-    x <- if (transform == "log1p") log1p(value) else sqrt(value)
+    if (transform == "log1p") log1p(r) else sqrt(r)
   }
 
-  # 3. Normalise (pooled across periods) -----------------------------------
-  v <- terra::values(x, mat = FALSE)
-  v <- v[is.finite(v)]
-  if (!length(v)) stop(id, ": no valid cells in the CRA extent.")
-
-  if (normalise == "percentile") {
-    ref <- sort(v)
-    score <- terra::app(x, function(x) {
-      out <- rep(NA_real_, length(x))
-      ok  <- is.finite(x)
-      out[ok] <- findInterval(x[ok], ref) / length(ref)
-      out
+  # 1. Resample to template -------------------------------------------------
+  value <- terra::rast(lapply(files, prep))
+  names(value) <- names(files)
+  gcm <- if (use_gcm) {
+    lapply(gcm_sources(src, names(files), models), function(fs) {
+      r <- terra::rast(lapply(fs, prep))
+      names(r) <- names(fs)
+      r
     })
+  }
+
+  # 2. Pooled values for the bounds (transformed scale) ---------------------
+  pool <- if (use_gcm) unlist(lapply(gcm, function(r) terra::values(tf(r), mat = FALSE)))
+          else terra::values(tf(value), mat = FALSE)
+  pool <- pool[is.finite(pool)]
+  if (!length(pool)) stop(id, ": no valid cells in the CRA extent.")
+
+  # 3. Normalise ------------------------------------------------------------
+  if (normalise == "percentile") {
+    ref <- sort(pool)
+    lo <- hi <- NA_real_
+    sc <- function(r) {
+      s <- terra::app(tf(r), function(x) {
+        out <- rep(NA_real_, length(x))
+        ok  <- is.finite(x)
+        out[ok] <- findInterval(x[ok], ref) / length(ref)
+        out
+      })
+      if (direction == -1) 1 - s else s
+    }
   } else {
     lo <- if (!is.na(lower)) lower else
-      if (!is.na(trim)) stats::quantile(v, trim, names = FALSE) else min(v)
+      if (!is.na(trim)) stats::quantile(pool, trim, names = FALSE) else min(pool)
     hi <- if (!is.na(upper)) upper else
-      if (!is.na(trim)) stats::quantile(v, 1 - trim, names = FALSE) else max(v)
+      if (!is.na(trim)) stats::quantile(pool, 1 - trim, names = FALSE) else max(pool)
     if (hi <= lo) stop(id, ": upper bound (", hi, ") <= lower bound (", lo, ").")
-    score <- terra::clamp((x - lo) / (hi - lo), 0, 1, values = TRUE)
+    sc <- function(r) {
+      s <- terra::clamp((tf(r) - lo) / (hi - lo), 0, 1, values = TRUE)
+      if (direction == -1) 1 - s else s
+    }
   }
-
-  # 4. Direction: 1 always means worse -------------------------------------
-  if (direction == -1) score <- 1 - score
+  score <- sc(value)
   names(score) <- names(files)
 
-  # 5. Write --------------------------------------------------------------
+  # 4. Write ----------------------------------------------------------------
   dir <- file.path(out_dir, component)
   dir.create(dir, recursive = TRUE, showWarnings = FALSE)
   out <- c(
-    value = file.path(dir, paste0(id, "_value.tif")),
-    score = file.path(dir, paste0(id, "_score.tif"))
+    value  = file.path(dir, paste0(id, "_value.tif")),
+    score  = file.path(dir, paste0(id, "_score.tif")),
+    bounds = file.path(dir, paste0(id, "_bounds.csv"))
   )
   gdal <- c("COMPRESS=DEFLATE", "TILED=YES")
   terra::writeRaster(value, out[["value"]], overwrite = TRUE,
                      datatype = "FLT4S", gdal = gdal)
   terra::writeRaster(score, out[["score"]], overwrite = TRUE,
                      datatype = "FLT4S", gdal = gdal)
-  unname(out)
+  utils::write.csv(data.frame(
+    id = id, normalise = normalise, transform = if (has_tf) transform else NA,
+    direction = direction, lo = lo, hi = hi,
+    pooled = if (use_gcm) "gcm" else "layers", n_models = length(models) * use_gcm,
+    n_values = length(pool)
+  ), out[["bounds"]], row.names = FALSE)
+
+  gf <- character()
+  if (use_gcm) {
+    gdir <- file.path(dir, "gcm")
+    dir.create(gdir, showWarnings = FALSE)
+    gf <- vapply(names(gcm), function(p) {
+      f <- file.path(gdir, paste0(id, "_score_", p, ".tif"))
+      s <- round(sc(gcm[[p]]) * GCM_SCALE)
+      names(s) <- names(gcm[[p]])
+      terra::writeRaster(s, f, overwrite = TRUE, datatype = "INT2U",
+                         gdal = c(gdal, "PREDICTOR=2"))
+      f
+    }, "")
+  }
+  unname(c(out, gf))
 }
 
 
 # ----------------------------------------------------------------------------
 # summarise_indicators(): QA table for all indicator files
 # ----------------------------------------------------------------------------
-# One row per file and layer. `coverage` is the share of template cells
-# with a value; anything well below 1 means the source does not cover the
-# whole extent (or needs na_fill).
+# One row per value/score file and layer (bounds and per-GCM files are
+# skipped). `coverage` is the share of template cells with a value; anything
+# well below 1 means the source does not cover the whole extent (or needs
+# na_fill).
 
 summarise_indicators <- function(files, template, out) {
+  files <- files[grepl("_(value|score)\\.tif$", files)]
   tmpl <- terra::rast(template)
   n_cells <- terra::global(tmpl, "notNA")[[1]]
 

@@ -26,6 +26,19 @@
 #        pct_increase / pct_decrease / pct_nochange, n_pairs,
 #        change_median / change_p10 / change_p90 and, for metrics with
 #        rel = TRUE, change_pct_median / _p10 / _p90 (100 * d / hist).
+#      Per-model significance (IPCC AR6 Atlas approach): |d| > gamma, with
+#        "param": gamma = z * sd(detrended hist annual series) *
+#                 sqrt(1/n_hist + 1/n_fut), z = 1.645 (90%, two-sided);
+#        "perm":  rainfall_cv; gamma = 90th percentile of |CV difference|
+#                 over n_perm permutations of the pooled hist + future
+#                 annual rainfall, each divided by its own period mean (CV
+#                 is scale-free, so this tests equal CV, not equal mean).
+#      Writes <period>_significant (one 0/1 layer per model), pct_significant
+#      and robust_class: 1 robust (>= sig_thr % significant and >= agr_thr %
+#      agree on sign), 2 no change or no robust signal (< sig_thr %
+#      significant), 3 conflicting (>= sig_thr % significant, < agr_thr %
+#      agree). redo = FALSE skips models whose metric and series files
+#      exist, so only sections 4-5 run.
 #   5. Manifests: nex_input_availability.csv and nex_ensemble_models_used.csv
 #      (the latter is the file _targets.R tracks).
 #************************************************************
@@ -47,15 +60,19 @@ ens_scope <- "common"
 min_models <- 10
 use_ssps <- c("ssp126", "ssp245", "ssp370", "ssp585")   # same as NEX_SSPS in _targets.R
 use_periods <- NULL   # NULL = hist + every period of use_ssps whose folder exists
-redo <- TRUE
+redo <- FALSE
+sig_lvl <- 0.90
+sig_thr <- 66
+agr_thr <- 80
+n_perm <- 1000
 
 mets <- tribble(
-  ~id,               ~dir,                   ~prefix,                 ~ser,  ~rel,
-  "annual_rainfall", "annual_rainfall",      "annual_rainfall_nex_",  TRUE,  TRUE,
-  "rainfall_cv",     "rainfall_variability", "rainfall_cv_nex_",      FALSE, FALSE,
-  "cdd",             "consecutive_dry_days", "cdd_mean_nex_",         TRUE,  FALSE,
-  "pet",             "pet_hargreaves",       "pet_hargreaves_nex_",   TRUE,  TRUE,
-  "aridity_index",   "aridity_index",        "aridity_index_nex_",    TRUE,  FALSE
+  ~id,               ~dir,                   ~prefix,                 ~ser,  ~rel,  ~sig,    ~sig_src,
+  "annual_rainfall", "annual_rainfall",      "annual_rainfall_nex_",  TRUE,  TRUE,  "param", "annual_rainfall",
+  "rainfall_cv",     "rainfall_variability", "rainfall_cv_nex_",      FALSE, FALSE, "perm",  "annual_rainfall",
+  "cdd",             "consecutive_dry_days", "cdd_mean_nex_",         TRUE,  FALSE, "param", "cdd",
+  "pet",             "pet_hargreaves",       "pet_hargreaves_nex_",   TRUE,  TRUE,  "param", "pet",
+  "aridity_index",   "aridity_index",        "aridity_index_nex_",    TRUE,  FALSE, "param", "aridity_index"
 )
 walk(c(file.path(out_dir, c(mets$dir, "manifests")),
        file.path(ser_dir, mets$dir[mets$ser])),
@@ -229,6 +246,44 @@ write_layer <- function(r, i, period, stat) {
               overwrite = TRUE)
 }
 
+gam_cache <- new.env()
+
+gamma_model <- function(i, model, period) {
+  j <- jobs[jobs$period_name == period, ]
+  nf <- j$last_year - j$first_year + 1
+  perm <- mets$sig[i] == "perm"
+  k <- paste(i, model, if (perm) period else nf)
+  if (!is.null(gam_cache[[k]])) return(gam_cache[[k]])
+  si <- match(mets$sig_src[i], mets$id)
+  s <- rast(ser_file(si, hist_p, model))
+  y <- values(s)
+  nh <- ncol(y)
+  g <- if (perm) {
+    yf <- values(rast(ser_file(si, period, model)))
+    set.seed(sum(utf8ToInt(paste(model, period))))
+    n <- nh + ncol(yf)
+    ix <- t(apply(matrix(runif(n_perm * n), n_perm), 1, order))
+    cv <- function(z) {
+      mu <- rowMeans(z)
+      sqrt(rowSums((z - mu)^2) / (ncol(z) - 1)) / mu
+    }
+    vapply(seq_len(nrow(y)), \(c) {
+      a <- c(y[c, ] / mean(y[c, ]), yf[c, ] / mean(yf[c, ]))
+      if (!all(is.finite(a))) return(NA_real_)
+      z <- matrix(a[ix], n_perm)
+      quantile(abs(cv(z[, seq_len(nh), drop = FALSE]) - cv(z[, -seq_len(nh), drop = FALSE])),
+               sig_lvl, names = FALSE)
+    }, numeric(1))
+  } else {
+    tc <- seq_len(nh) - (nh + 1) / 2
+    res <- y - rowMeans(y) - outer(as.vector(y %*% tc) / sum(tc^2), tc)
+    qnorm(1 - (1 - sig_lvl) / 2) * sqrt(rowSums(res^2) / (nh - 2)) * sqrt(1 / nh + 1 / nf)
+  }
+  r <- rast(s[[1]])
+  values(r) <- g
+  gam_cache[[k]] <- r
+}
+
 ens_summary <- function(i, period) {
   ms <- ens[[period]]
   r <- rast(map_chr(ms, \(m) out_file(i, period, m)))
@@ -244,27 +299,40 @@ ens_summary <- function(i, period) {
 
   h <- rast(map_chr(ms, \(m) out_file(i, hist_p, m)))
   n <- length(ms)
+  g <- rast(lapply(ms, gamma_model, i = i, period = period))
   rel <- mets$rel[i]
   chn <- c("agreement_pct", "change_direction", "pct_increase", "pct_decrease",
            "pct_nochange", "n_pairs", "change_median", "change_p10", "change_p90",
+           "pct_significant", "robust_class",
            if (rel) c("change_pct_median", "change_pct_p10", "change_pct_p90"))
-  ch <- app(c(r, h), \(x) {
+  ch <- app(c(r, h, g), \(x) {
     b <- x[n + seq_len(n)]
     d <- x[seq_len(n)] - b
+    gm <- x[2 * n + seq_len(n)]
     ok <- is.finite(d)
     if (!any(ok)) return(c(rep(NA, 5), 0, rep(NA, length(chn) - 6)))
+    ks <- ok & is.finite(gm)
+    ps <- if (any(ks)) 100 * mean(abs(d[ks]) > gm[ks]) else NA
     b <- b[ok]
     d <- d[ok]
     s <- sign(median(d))
-    out <- c(100 * mean(sign(d) == s), s, 100 * mean(d > 0), 100 * mean(d < 0),
+    ag <- 100 * mean(sign(d) == s)
+    cl <- if (is.na(ps)) NA else if (ps < sig_thr) 2 else if (ag >= agr_thr) 1 else 3
+    out <- c(ag, s, 100 * mean(d > 0), 100 * mean(d < 0),
              100 * mean(d == 0), length(d), median(d),
-             quantile(d, c(0.1, 0.9), names = FALSE))
+             quantile(d, c(0.1, 0.9), names = FALSE), ps, cl)
     if (!rel) return(out)
     q <- 100 * d[b > 0] / b[b > 0]
     c(out, if (length(q)) c(median(q), quantile(q, c(0.1, 0.9), names = FALSE))
            else rep(NA, 3))
   })
   for (k in seq_along(chn)) write_layer(ch[[k]], i, period, chn[k])
+
+  sg <- abs(r - h) > g
+  names(sg) <- ms
+  writeRaster(sg, file.path(out_dir, mets$dir[i],
+                            paste0(mets$prefix[i], period, "_significant_umz.tif")),
+              overwrite = TRUE, datatype = "INT1U")
 }
 
 for (pp in jobs$period_name) for (i in seq_len(nrow(mets))) ens_summary(i, pp)

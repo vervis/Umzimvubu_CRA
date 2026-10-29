@@ -5,6 +5,10 @@
 #   00 inputs > 10 download > 20 prepare > 30 indicators > 40 components >
 #   50 risk > 60 validation > 70 visualisation > 80 export
 #
+# GCM uncertainty: NEX indicators are scored per GCM in stage 30 (shared
+# bounds), and stages 40-50 combine them per GCM into hazard and risk, then
+# summarise across GCMs (median, P10, P90, share of GCMs with high risk).
+#
 # Every layer uses one extent: the CRA rectangle (cra_extent() / cra_roi() in
 # R/functions/pipeline_helpers.R), the bounding box of the Umzimvubu
 # catchment + Alfred Nzo district snapped to the 1 km template.
@@ -52,6 +56,13 @@ NEX_PERIODS <- c(
                   NEX_SSPS, paste0))
 )
 
+# Stage 40-50 settings: risk = geometric mean of hazard, vulnerability and
+# exposure; "high" = at or above the RISK_Q_HIGH quantile of historical
+# median risk; component cells need >= COMP_MIN_W of their indicator weight.
+RISK_METHOD <- "geomean"
+RISK_Q_HIGH <- 0.8
+COMP_MIN_W  <- 0.5
+
 INDICATOR_REGISTER <- "R/30_indicators/indicator_register.csv"
 indicator_register <- read_indicator_register(INDICATOR_REGISTER)
 
@@ -66,7 +77,7 @@ indicator_targets <- tar_map(
       template = template_grid, resample = resample,
       direction = direction, normalise = normalise, trim = trim,
       lower = lower, upper = upper, na_fill = na_fill,
-      transform = transform,
+      transform = transform, models = nex_models,
       upstream = upstream
     ),
     format = "file"
@@ -163,6 +174,7 @@ list(
                raw_nex_gddp),
     format = "file"
   ),
+  tar_target(nex_models, sort(unique(utils::read.csv(hazards_nex)$model))),
 
   # 202 Smallholder presence (SANLC class 41, 20 m)
   script_target("script_202", "R/20_prepare/202_prepare_vulnerability_smallholder_presence.R"),
@@ -376,16 +388,32 @@ list(
   ),
 
   # ==========================================================================
+  # 40 Components and 50 Risk: per GCM, then ensemble statistics
+  # ==========================================================================
+  tar_target(indicator_register_csv, INDICATOR_REGISTER, format = "file"),
+  tar_target(
+    components,
+    make_components(indicator_register_csv, indicator_files, NEX_PERIODS, nex_models,
+                    min_w = COMP_MIN_W),
+    format = "file"
+  ),
+  tar_target(
+    risk,
+    make_risk(components, NEX_PERIODS, nex_models, method = RISK_METHOD,
+              q_high = RISK_Q_HIGH),
+    format = "file"
+  ),
+
+  # ==========================================================================
   # 70 Visualisation
   # ==========================================================================
   script_target("script_701", "R/70_visualisation/701_visualisation_leaflet_map.R"),
   tar_target(framework_xlsx, "../CRA_data_sources_Claude.xlsx", format = "file"),
-  tar_target(indicator_register_csv, INDICATOR_REGISTER, format = "file"),
   tar_target(
     indicator_map,
     run_script(script_701, "outputs/maps/umzimvubu_cra_indicators_leaflet.html",
                indicator_files, indicator_register_csv, framework_xlsx,
-               catchment_shp, district_shp),
+               catchment_shp, district_shp, hazards_nex, components, risk),
     format = "file"
   ),
 
