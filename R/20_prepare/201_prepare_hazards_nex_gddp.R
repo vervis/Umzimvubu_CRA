@@ -16,9 +16,16 @@
 #   2. Ensemble membership: ens_scope "common" = models complete for hist
 #      and every processed period (one consistent ensemble, as stage 30
 #      normalises across periods); "period" = complete for hist + period.
-#   3. Per-model metrics for every model complete in a period.
-#   4. Ensemble median, p10, p90, sd, n_models; for future periods the
-#      share of models agreeing on the sign of change vs their own hist.
+#   3. Per-model metrics for every model complete in a period, plus the
+#      annual series behind them (annual_series/<dir>/, one layer per year;
+#      AI series is annual P/PET, so its mean != the period AI) for later
+#      per-model significance tests against interannual variability.
+#   4. Ensemble median, p10, p90, sd, n_models. For future periods, from
+#      the paired per-model changes d = future - own hist:
+#        agreement_pct, change_direction (sign of median d; as before),
+#        pct_increase / pct_decrease / pct_nochange, n_pairs,
+#        change_median / change_p10 / change_p90 and, for metrics with
+#        rel = TRUE, change_pct_median / _p10 / _p90 (100 * d / hist).
 #   5. Manifests: nex_input_availability.csv and nex_ensemble_models_used.csv
 #      (the latter is the file _targets.R tracks).
 #************************************************************
@@ -33,24 +40,26 @@ source("R/functions/nex_functions.R")
 raw_dir <- "data/raw/nex_gddp_cmip6"
 out_dir <- "data/processed/hazard"
 man_dir <- file.path(out_dir, "manifests")
+ser_dir <- file.path(out_dir, "annual_series")
 vars <- c("pr", "tasmax", "tasmin")
 cdd_thr <- 1
 ens_scope <- "common"
 min_models <- 10
-use_ssps <- c("ssp126", "ssp245")   # same as NEX_SSPS in _targets.R
+use_ssps <- c("ssp126", "ssp245", "ssp370", "ssp585")   # same as NEX_SSPS in _targets.R
 use_periods <- NULL   # NULL = hist + every period of use_ssps whose folder exists
 redo <- TRUE
 
 mets <- tribble(
-  ~id,               ~dir,                   ~prefix,
-  "annual_rainfall", "annual_rainfall",      "annual_rainfall_nex_",
-  "rainfall_cv",     "rainfall_variability", "rainfall_cv_nex_",
-  "cdd",             "consecutive_dry_days", "cdd_mean_nex_",
-  "pet",             "pet_hargreaves",       "pet_hargreaves_nex_",
-  "aridity_index",   "aridity_index",        "aridity_index_nex_"
+  ~id,               ~dir,                   ~prefix,                 ~ser,  ~rel,
+  "annual_rainfall", "annual_rainfall",      "annual_rainfall_nex_",  TRUE,  TRUE,
+  "rainfall_cv",     "rainfall_variability", "rainfall_cv_nex_",      FALSE, FALSE,
+  "cdd",             "consecutive_dry_days", "cdd_mean_nex_",         TRUE,  FALSE,
+  "pet",             "pet_hargreaves",       "pet_hargreaves_nex_",   TRUE,  TRUE,
+  "aridity_index",   "aridity_index",        "aridity_index_nex_",    TRUE,  FALSE
 )
-walk(file.path(out_dir, c(mets$dir, "manifests")), dir.create,
-     recursive = TRUE, showWarnings = FALSE)
+walk(c(file.path(out_dir, c(mets$dir, "manifests")),
+       file.path(ser_dir, mets$dir[mets$ser])),
+     dir.create, recursive = TRUE, showWarnings = FALSE)
 
 models <- read_csv(file.path(raw_dir, "manifests", "common_complete_ensemble.csv"),
                    show_col_types = FALSE)$model
@@ -108,6 +117,10 @@ if (any(n_ens < min_models))
 out_file <- function(i, period, model)
   file.path(out_dir, mets$dir[i], paste0(mets$prefix[i], period, "_", model, "_umz.tif"))
 
+ser_file <- function(i, period, model)
+  file.path(ser_dir, mets$dir[i],
+            paste0(mets$prefix[i], "annual_", period, "_", model, "_umz.tif"))
+
 read_var <- function(period, model, var, yrs) {
   x <- inv[inv$valid & inv$period == period & inv$model == model &
              inv$variable == var, ]
@@ -142,7 +155,8 @@ max_run <- function(x) {
 }
 
 calc_model <- function(period, model) {
-  if (!redo && all(file.exists(map_chr(seq_len(nrow(mets)), out_file, period, model))))
+  if (!redo && all(file.exists(c(map_chr(seq_len(nrow(mets)), out_file, period, model),
+                                 map_chr(which(mets$ser), ser_file, period, model)))))
     return(invisible())
   message("201: ", period, " / ", model)
   j <- jobs[jobs$period_name == period, ]
@@ -186,6 +200,19 @@ calc_model <- function(period, model) {
     names(r) <- paste0(sub("_nex_$", "_", mets$prefix[i]), period, "_", model)
     writeRaster(r, out_file(i, period, model), overwrite = TRUE)
   }
+
+  ser <- list(
+    annual_rainfall = pa,
+    cdd = cdd,
+    pet = pet_a,
+    aridity_index = ifelse(pet_a > 0, pa / pet_a, NA_real_)
+  )
+  for (i in which(mets$ser)) {
+    r <- rast(p$grid, nlyrs = length(yrs))
+    values(r) <- matrix(ser[[mets$id[i]]], ncol = length(yrs))
+    names(r) <- yrs
+    writeRaster(r, ser_file(i, period, model), overwrite = TRUE)
+  }
 }
 
 for (pp in jobs$period_name) for (m in done[[pp]]) calc_model(pp, m)
@@ -217,15 +244,27 @@ ens_summary <- function(i, period) {
 
   h <- rast(map_chr(ms, \(m) out_file(i, hist_p, m)))
   n <- length(ms)
-  ag <- app(c(r, h), \(x) {
-    d <- x[seq_len(n)] - x[n + seq_len(n)]
-    d <- d[is.finite(d)]
-    if (!length(d)) return(c(NA, NA))
+  rel <- mets$rel[i]
+  chn <- c("agreement_pct", "change_direction", "pct_increase", "pct_decrease",
+           "pct_nochange", "n_pairs", "change_median", "change_p10", "change_p90",
+           if (rel) c("change_pct_median", "change_pct_p10", "change_pct_p90"))
+  ch <- app(c(r, h), \(x) {
+    b <- x[n + seq_len(n)]
+    d <- x[seq_len(n)] - b
+    ok <- is.finite(d)
+    if (!any(ok)) return(c(rep(NA, 5), 0, rep(NA, length(chn) - 6)))
+    b <- b[ok]
+    d <- d[ok]
     s <- sign(median(d))
-    c(100 * mean(sign(d) == s), s)
+    out <- c(100 * mean(sign(d) == s), s, 100 * mean(d > 0), 100 * mean(d < 0),
+             100 * mean(d == 0), length(d), median(d),
+             quantile(d, c(0.1, 0.9), names = FALSE))
+    if (!rel) return(out)
+    q <- 100 * d[b > 0] / b[b > 0]
+    c(out, if (length(q)) c(median(q), quantile(q, c(0.1, 0.9), names = FALSE))
+           else rep(NA, 3))
   })
-  write_layer(ag[[1]], i, period, "agreement_pct")
-  write_layer(ag[[2]], i, period, "change_direction")
+  for (k in seq_along(chn)) write_layer(ch[[k]], i, period, chn[k])
 }
 
 for (pp in jobs$period_name) for (i in seq_len(nrow(mets))) ens_summary(i, pp)

@@ -23,7 +23,7 @@ source("R/functions/nex_functions.R")
 raw_dir <- "data/raw/nex_gddp_cmip6"
 man_dir <- file.path(raw_dir, "manifests")
 vars    <- c("pr", "tasmax", "tasmin")
-use_ssps <- c("ssp126", "ssp245")
+use_ssps <- c("ssp126", "ssp245", "ssp370", "ssp585")
 test    <- TRUE
 n_test  <- 3
 workers <- 2

@@ -45,7 +45,7 @@ script_target <- function(name, path) {
 
 # NEX-GDDP periods built in stage 30; each must exist as "{period}" in the
 # file names written by 201. Keep NEX_SSPS equal to use_ssps in 201.
-NEX_SSPS <- c("ssp126", "ssp245")
+NEX_SSPS <- c("ssp126", "ssp245", "ssp370", "ssp585")
 NEX_PERIODS <- c(
   "hist_1981_2014",
   as.vector(outer(c("near_2021_2040_", "mid_2041_2070_", "late_2071_2100_"),
